@@ -1,0 +1,46 @@
+/*
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Copyright (c) 2017-20, Lawrence Livermore National Security, LLC
+and DataRaceBench project contributors. See the DataRaceBench/COPYRIGHT file for details.
+
+SPDX-License-Identifier: (BSD-3-Clause)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+*/
+
+//The second taskwait ensures that the second child task has completed; hence it is safe to access
+//the y variable in the following print statement.
+
+#include <omp.h>
+#include <stdio.h>
+
+void foo()
+{
+    int x, y;
+    x = 0;
+    y = 2;
+
+    #pragma omp task depend(inout: x) shared(x)
+    x = x + 1;  // 1st Child Task
+
+    #pragma omp task shared(y)
+    y = y - x;  // 2nd child task - note: uses x value
+
+    #pragma omp taskwait depend(in: x)  // 1st taskwait - OpenMP 5.0 feature
+
+    printf("x = %d\n", x);
+
+    #pragma omp taskwait  // 2nd taskwait
+
+    printf("y = %d\n", y);  // Safe: all tasks completed
+}
+
+int main()
+{
+    #pragma omp parallel
+    {
+        #pragma omp single
+        foo();
+    }
+
+    return 0;
+} 
