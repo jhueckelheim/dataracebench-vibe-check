@@ -44,7 +44,7 @@ for file in $(find . -name "*.go" | sort); do
     fi
     
     # Run with race detector and capture both stdout and stderr
-    output=$(go run -race "$file" 2>&1)
+    output=$(timeout 5m go run -race "$file" 2>&1)
     exit_code=$?
     
     # Check if compilation failed
