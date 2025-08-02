@@ -1,0 +1,66 @@
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// Copyright (c) 2017-20, Lawrence Livermore National Security, LLC
+// and DataRaceBench project contributors. See the DataRaceBench/COPYRIGHT file for details.
+//
+// SPDX-License-Identifier: (BSD-3-Clause)
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+//There is a loop-carried true dependence within the outer level loop.
+//Data race pair: b[i][j]@31:13:W vs. b[i-1][j-1]@31:22:R
+
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func main() {
+	var i, j, n, m int
+	var b [][]float32
+
+	n = 1000
+	m = 1000
+	b = make([][]float32, n)
+	for i = 0; i < n; i++ {
+		b[i] = make([]float32, m)
+	}
+
+	for i = 1; i <= n; i++ {
+		for j = 1; j <= m; j++ {
+			b[i-1][j-1] = 0.5
+		}
+	}
+
+	//$omp parallel do private(j)
+	var wg sync.WaitGroup
+	numCPU := runtime.NumCPU()
+	chunkSize := (n - 1) / numCPU
+	if chunkSize < 1 {
+		chunkSize = 1
+	}
+
+	for start := 2; start <= n; start += chunkSize {
+		end := start + chunkSize - 1
+		if end > n {
+			end = n
+		}
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			var j int // private variable
+			for i := start; i <= end; i++ {
+				for j = 2; j <= m; j++ {
+					b[i-1][j-1] = b[i-2][j-2] // True dependence race condition
+				}
+			}
+		}(start, end)
+	}
+	wg.Wait()
+	//$omp end parallel do
+
+	fmt.Printf("b(500,500) = %10.6f\n", b[499][499])
+
+	// deallocate(b)
+}

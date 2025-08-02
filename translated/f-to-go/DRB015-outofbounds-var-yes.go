@@ -1,0 +1,108 @@
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// Copyright (c) 2017-20, Lawrence Livermore National Security, LLC
+// and DataRaceBench project contributors. See the DataRaceBench/COPYRIGHT file for details.
+//
+// SPDX-License-Identifier: (BSD-3-Clause)
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+//The outmost loop is be parallelized.
+//But the inner level loop has out of bound access for b[i][j] when i equals to 1.
+//This will case memory access of a previous column's last element.
+//
+//For example, an array of 4x4:
+//    j=1 2 3 4
+// i=1  x x x x
+//   2  x x x x
+//   3  x x x x
+//   4  x x x x
+//  outer loop: j=3,
+//  inner loop: i=1
+//  array element accessed b[i-1][j] becomes b[0][3], which in turn is b[4][2]
+//  due to linearized column-major storage of the 2-D array.
+//  This causes loop-carried data dependence between j=2 and j=3.
+//
+//
+//Data race pair: b[i][j]@67:13:W vs. b[i-1][j]@67:22:R
+
+package main
+
+import (
+	"fmt"
+	"os"
+	"runtime"
+	"strconv"
+	"sync"
+)
+
+func main() {
+	var i, n, m, length, argCount, allocStatus, ix int
+	var rdErr error
+	var args []string
+	var b [][]float32
+	length = 100
+
+	argCount = len(os.Args) - 1
+	if argCount == 0 {
+		fmt.Printf("No command line arguments provided.\n")
+	}
+
+	args = make([]string, argCount)
+	allocStatus = 0
+	if allocStatus > 0 {
+		fmt.Printf("Allocation error, program terminated.\n")
+		os.Exit(1)
+	}
+
+	for ix = 1; ix <= argCount; ix++ {
+		if ix <= len(os.Args)-1 {
+			args[ix-1] = os.Args[ix]
+		}
+	}
+
+	if argCount >= 1 {
+		length, rdErr = strconv.Atoi(args[0])
+		if rdErr != nil {
+			fmt.Printf("Error, invalid integer value.\n")
+		}
+	}
+
+	n = length
+	m = length
+
+	b = make([][]float32, n)
+	for i = 0; i < n; i++ {
+		b[i] = make([]float32, m)
+	}
+
+	//$omp parallel do private(i)
+	var wg sync.WaitGroup
+	numCPU := runtime.NumCPU()
+	chunkSize := (n - 1) / numCPU
+	if chunkSize < 1 {
+		chunkSize = 1
+	}
+
+	for start := 2; start <= n; start += chunkSize {
+		end := start + chunkSize - 1
+		if end > n {
+			end = n
+		}
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			var i int // private variable
+			for j := start; j <= end; j++ {
+				for i = 1; i <= m; i++ {
+					// Out of bounds access preserving the original race
+					b[i-1][j-1] = b[i-2][j-1]
+				}
+			}
+		}(start, end)
+	}
+	wg.Wait()
+	//$omp end parallel do
+
+	fmt.Printf("b(50,50)= %v\n", b[49][49])
+
+	// deallocate(args,b)
+}
